@@ -33,6 +33,10 @@ hpi <- read_csv(paste0(getwd(),'/HPI_Full.csv'), col_names = T) %>%
 #   tidyr:: fill(WorkplaceEarnings, ResidenceEarnings) %>%
 #   dplyr:: select(-Year)
 
+## Load and Tidy Inflation Data
+
+inflation <- read.csv(paste0(getwd(),'/mm23.csv'))
+
 ## Load and Tidy RPI Dataset
 
 rpi <- read.xlsx(paste0(getwd(),'/inflation.xlsx'), sheet = 49, startRow = 7,cols = c(2,4:15)) %>%
@@ -84,6 +88,8 @@ hpi_lad <- hpi %>%
   dplyr:: filter(!is.na(RegionCounty)) %>% # this data set has everything but LAD level removed
   dplyr:: rename(Area = RegionName,
                  Region = RegionCounty)
+
+housingtypes <- c("Detached","SemiDetached","Terraced","Flat")
   
 rm(hpi,br,earnings)
 gc()
@@ -125,6 +131,7 @@ PriceVolGraphR <- function(df,
     ncol=2)
 } 
 #### Shows differences in price based on chosen variables and volume over time
+
 
 AreaRegionCountryCompareR <- function(df, 
                                       area,

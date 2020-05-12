@@ -12,9 +12,177 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```
 
-# Introduction {-}
+# Introduction and Questions I want to answer{-}
 
-I wanted to start a project in R for some time as a chance to both practice techniques and highlight my (still developmental) skillset to any potential employers, colleagues or mentors. 
+In this project I am looking at the UK's housing economy, I have chosen this topic because it is an aim of mine to be a homeowner and it is a topic which obviously strikes fear into a lot of millenials. There are questions I want to answer:
 
-I have chosen to look at the UK housing market using this [data](https://www.gov.uk/guidance/about-the-price-paid-data#explanations-of-column-headers-in-the-ppd)
+- What areas have the highest growth over the time period?
+- What are the biggest and the most common factors in the price of a house?
+- How does owning a house compare as an investment?
+
+As with any projects I load in my packages, there's quite a few I've used here and some were for simple experimentation so I will remove them when necersary.
+
+```{r Libraries, results = "hide",message = FALSE,warning = FALSE}
+
+library(tidyverse)
+library(lubridate)
+library(mgsub)
+library(stringi)
+library(class)
+library(data.table)
+library(RSQLite)
+library(DBI)
+library(gridExtra)
+library(openxlsx)
+library(broom)
+library(ggraph)
+library(ggeffects)
+library(class)
+
+```
+
+This is followed by cleaning and tidying the datasets with dplyr and tidyr, I have created one big data frame from this called hpi_lad.
+
+```{r Setup, results = "hide",message = FALSE,warning = FALSE}
+
+## Load and Tidy RPI Dataset
+
+hpi <- read_csv(paste0(getwd(),'/HPI_Full.csv'), col_names = T) %>%
+  dplyr:: mutate(Date = as_date(dmy(Date))) %>%
+  dplyr:: select(-IndexSA)
+
+## Load and Tidy 2011 Census Dataset
+
+census2011_lad <- read.xlsx(paste0(getwd(),'/censusdata.xlsx'), sheet = 3, startRow = 8) %>%
+  dplyr:: rename(AreaCode = Code,
+                 RegionCounty = `Region/Country`,
+                 Supergroup = Supergroup.name,
+                 Group = Group.name,
+                 Subgroup = Subgroup.name) %>%
+  dplyr:: select(-c(Name, contains(".code"), `Country/region`)) %>%
+  dplyr:: mutate_if(is.character, trimws)
+
+## Load and Tidy Bankrate Dataset
+
+br <- read_csv(paste0(getwd(),'/bankrate.csv'), col_names = T) %>%
+  dplyr:: rename(Date = `Date Changed`) %>%
+  dplyr:: mutate(Date = as_date(dmy(Date))) %>%
+  tidyr:: complete(Date = seq.Date(min(Date), max(Date), by="day")) %>%
+  tidyr:: fill(Rate)
+
+# Combine Datasets
+
+hpi_lad <- hpi %>%
+  dplyr:: left_join(census2011_lad[ , (names(census2011_lad)) %in% 
+                                         c("Name","AreaCode", "RegionCounty", "Supergroup", "Group", "Subgroup")], 
+                    by = "AreaCode") %>%
+  dplyr:: mutate(Country = case_when(RegionCounty == "Scotland" ~ "Scotland",
+                                     RegionCounty == "Wales" ~ "Wales",
+                                     RegionCounty == "Northern Ireland" ~ "NorthernIreland",
+                                     TRUE ~ "England"),
+                 RegionCounty = case_when(RegionCounty == Country ~ RegionName,
+                                    RegionCounty != Country ~ RegionCounty)) %>%
+  dplyr:: left_join(br, 
+                    by = "Date") %>%
+  dplyr:: select(Date, AreaCode, RegionName, RegionCounty, Country, 
+                 Supergroup, Group, Subgroup, everything()) %>%
+  dplyr:: filter(!is.na(RegionCounty)) %>% # this data set has everything but LAD level removed
+  dplyr:: rename(Area = RegionName,
+                 Region = RegionCounty)
+
+housingtypes <- c("Detached","SemiDetached","Terraced","Flat")
+  
+rm(hpi,br,census2011_lad)
+gc()
+
+```
+
+# What areas have the highest growth over the time period
+
+I created a function to graph how individual areascompare so I could start to understand the data to help me build a plan for how I was going to create an answer for this.
+
+```{r Graph Function 1, message = FALSE, warning = FALSE}
+
+AreaRegionCountryCompareR <- function(df, 
+                                      area,
+                                      datefil){
+  
+  reg <- unique(df[df$Area == area,]$Region)
+  country <- unique(df[df$Area == area,]$Country)
+  places <- c(area, 
+              reg, 
+              country)
+  
+  type <- c("Area",
+            "Region",
+            "Country")
+  
+  dfcreate <- function(x){
+    
+    dfgg <- x %>%
+      dplyr:: filter_at(vars(contains(type[i])),  any_vars(. == places[i])) %>%
+      dplyr:: group_by_at(c(type[i], "Date")) %>%
+      dplyr:: summarise(MeanPrice = mean(AveragePrice, na.rm = T)) %>%
+      dplyr:: ungroup()
+    
+    names(dfgg)[1] <- "Location"
+    
+    return(dfgg)
+    
+  }
+  
+  prices <- list()
+  
+  for (i in 1:length(places)){
+    
+   prices[[i]] <- assign(paste0(places[i], "Price"), dfcreate(hpi_lad))
+    
+  }
+
+  dfgg1 <- data.frame(df[df$Area == area,]) %>%
+    tidyr:: gather(key = !!eval(expr(paste(!!!area))), 
+                   value = 'Price', 
+                   all_of(c("AveragePrice",
+                            "DetachedPrice",
+                            "FlatPrice",
+                            "SemiDetachedPrice",
+                            "TerracedPrice"))) %>%
+    dplyr:: filter(!is.na(Price)|
+                   Date >= datefil) %>%
+    dplyr:: group_by_at(c(area, "Date")) %>%
+    dplyr:: summarise(MeanPrice = mean(Price, na.rm = T),
+                      SDPrice = sd(Price, na.rm = T),
+                      MeanVol = mean(SalesVolume, na.rm = T),
+                      SDVol = sd(SalesVolume, na.rm = T))  
+
+  grid.arrange(
+    
+    ggplot(bind_rows(prices),
+           aes(Date, MeanPrice, colour = Location)) +
+      geom_line() +
+      ggtitle(paste0(area," Price Comparison")),
+    
+    ggplot(dfgg1, 
+           aes_string(x = "Date", y = "MeanPrice", colour = paste0("`",area,"`")), na.rm = T) +
+      geom_line() +
+      ggtitle(paste0(area," Housing Price Split")),
+    
+    nrow = 2)
+     
+} 
+
+AreaRegionCountryCompareR(df = hpi_lad, 
+                          area = "West Berkshire",
+                          datefil = "1995-01-01")
+
+```
+
+
+
+##### Data References {-}
+
+- [HPI data](https://www.gov.uk/government/statistical-data-sets/uk-house-price-index-data-downloads-february-2020)
+- [Bank Rate data](https://www.bankofengland.co.uk/boeapps/database/Bank-Rate.asp)
+- [2011 Census Data for LADs](https://www.ons.gov.uk/methodology/geography/geographicalproducts/areaclassifications/2011areaclassifications/datasets)
+- [Inflation Time Series](https://www.ons.gov.uk/economy/inflationandpriceindices/datasets/consumerpriceindices)
 
