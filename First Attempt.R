@@ -1,11 +1,10 @@
- # Load Libraries
+ # Load Env
 
-library(tidyverse)
-library(lubridate)
-library(mgsub)
-library(stringi)
-library(class)
-library(ISLR)
+source(paste0(getwd(), "/env.R"))
+
+# Create Connection
+
+con <- dbConnect(RSQLite::SQLite(), ":memory:")
 
 # Load and Tidy Dataset
 
@@ -43,6 +42,10 @@ pp19 <- read_csv(paste0(getwd(),'/pp-2019.csv'), col_names = F) %>%
                                     vectorize_all = FALSE)
                 )
 
+dbWriteTable(con, "pp19", pp19)
+
+rm(pp19)
+
 geomap <- read_csv(paste0(getwd(),'/geomapping.csv'), col_names = T) %>%
   dplyr:: mutate(CTY17NM = ifelse(is.na(CTY17NM), 
                                   str_to_upper(LAD17NM),
@@ -64,7 +67,7 @@ geomap <- read_csv(paste0(getwd(),'/geomapping.csv'), col_names = T) %>%
                                                                  rep("DORSET",2)), 
                                                  vectorize_all = FALSE)
                 ) %>%
-  dplyr:: select("CTY17NM", "GOR10NM", "CTRY17NM")  %>%
+ # dplyr:: select("CTY17NM", "GOR10NM", "CTRY17NM")  %>%
   dplyr:: rename(
     County = CTY17NM,
     Region = GOR10NM,
@@ -72,62 +75,38 @@ geomap <- read_csv(paste0(getwd(),'/geomapping.csv'), col_names = T) %>%
                 ) %>%
   stats:: na.omit()
 
-# pp19geo <- left_join(pp19, geomap, by = "County") # Error: vector memory exhausted (limit reached?)
+dbWriteTable(con, "geomap", geomap)
 
-regions <- unique(geomap$Region)
+rm(geomap)
 
 gc()
 
-tst <- pp19[pp19$County %in% geomap[geomap$Region %in% c("South East"),]$County,] #London
+dbListFields(con, "pp19")
 
-# KNN
+dbListFields(con, "geomap")
 
-## Example
+res <- dbSendQuery(con, "SELECT Price, Date, Postcode, PropertyType, County, 
+                                Region, Country  
+                         FROM pp19
+                         LEFT JOIN geomap
+                         USING (County);")
 
-set.seed(1)
 
-attach(Smarket)
+x <- dbFetch(res)
 
- train.fil.tst <- (Year <2005)
- train.tst <- cbind(Smarket$Lag1 ,Smarket$Lag2)[train.fil.tst,]
- test.tst <- cbind(Smarket$Lag1,Smarket$Lag2)[!train.fil.tst,]
- train.dir.tst <- Direction[train.fil.tst]
- Direction.2005 <- Direction[!train.fil.tst]
- 
- knn.eval <- data.frame(acc = rep(NA,100), knum = rep(NA,100))
- 
- for (i in 1:10){
- 
- knn.tst <- knn(train.tst,test.tst,train.dir.tst,k = i)
+###
 
- knn.tbl.tst <- table(knn.tst, Direction.2005)
+CountyGraphR <- function(Regs, PriceLim){
 
- knn.eval$knum[i] <- i
- 
- knn.eval$acc[i] <- (knn.tbl.tst[1,1]+knn.tbl.tst[2,2])/sum(knn.tbl.tst)
- 
- }
-
- ggplot(knn.eval, aes(x = knum, y= acc)) +
-   geom_point()
-   
-## Property Type
-
- # Visualisation of Dataset
-
-ggplot(tst[tst$PropertyType != "O"&pp19$Price<300000,], aes(x = PropertyType, y = Price)) +
-  geom_boxplot(outlier.colour="black", outlier.shape = 16,
-               outlier.size = 2, notch = FALSE)
-
-tst <- pp19 %>%
-  dplyr:: group_by(Month = month(Date), County) %>%
-  dplyr:: summarise(MeanPrice = mean(Price))
+tst <- pp19[pp19$County %in% geomap[geomap$Region %in% Regs,]$County,] # London
 
 ggplot(tst %>%
-         dplyr:: filter(Price < 500000) %>%
+         dplyr:: filter(Price < PriceLim) %>%
          dplyr:: group_by(Month = month(Date, label = T), County) %>%
          dplyr:: summarise(MeanPrice = mean(Price),
                            NSale = n())) +
   geom_point(aes(x = Month, y = MeanPrice, colour = County, size = NSale))
 
+}
 
+CountyGraphR(c("London", "South East"), 500000)

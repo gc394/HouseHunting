@@ -1,0 +1,20 @@
+---
+title: "Housing Analysis with R"
+author: "Greg Cooke"
+date: "12/05/2020"
+output: 
+  bookdown::html_document2
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Introduction {-}
+
+I wanted to start a project in R for some time as a chance to both practice techniques and highlight my (still developmental) skillset to any potential employers, colleagues or mentors. 
+
+I have chosen to look at the UK housing market using this [data](https://www.gov.uk/guidance/about-the-price-paid-data#explanations-of-column-headers-in-the-ppd)
+
